@@ -1,0 +1,25 @@
+# Core
+torch>=2.2
+transformers>=4.42
+accelerate>=0.30
+peft>=0.11          # LoRA
+
+# Data
+pandas>=2.0
+numpy>=1.26
+pillow>=10.0
+requests>=2.31
+scikit-learn>=1.4
+pyyaml>=6.0
+
+# Baselines
+scikit-learn>=1.4    # TF-IDF + Logistic Regression
+
+# Training / experiment tracking
+tqdm>=4.66
+tensorboard>=2.16
+
+# Notebooks / EDA
+matplotlib>=3.8
+seaborn>=0.13
+jupyter>=1.0

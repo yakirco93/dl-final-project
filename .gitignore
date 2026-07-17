@@ -1,0 +1,24 @@
+# Data (never commit raw data or images)
+data/raw/*
+data/processed/*
+data/images/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/images/.gitkeep
+
+# Experiments / checkpoints / logs
+experiments/*
+!experiments/.gitkeep
+*.pt
+*.pth
+*.ckpt
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.env
+
+# OS
+.DS_Store
