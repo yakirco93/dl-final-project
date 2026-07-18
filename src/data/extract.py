@@ -87,6 +87,7 @@ SELECT
     tags,
     pic_furl,
     site,
+    display_time,
     CASE
         WHEN pct_rank_site_month >= .90 THEN 1
         ELSE 0
@@ -95,7 +96,7 @@ FROM ranked
 ORDER BY display_time;
 """
 
-EXPECTED_COLUMNS = ["item_id", "teaser_titel", "tags", "pic_furl", "site", "target"]
+EXPECTED_COLUMNS = ["item_id", "teaser_titel", "tags", "pic_furl", "site", "display_time", "target"]
 
 
 def validate_extract(csv_path: str = "data/raw/articles.csv") -> pd.DataFrame:
@@ -120,6 +121,7 @@ def validate_extract(csv_path: str = "data/raw/articles.csv") -> pd.DataFrame:
     print(f"Null teaser_titel: {df['teaser_titel'].isna().sum()}  "
           f"(check this -- the enrichment join could produce nulls if a "
           f"channel_id match is missing)")
+    print(f"Date range: {df['display_time'].min()} to {df['display_time'].max()}")
 
     return df
 
