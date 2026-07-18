@@ -1,4 +1,4 @@
-"""Article-level data extraction — MANUAL EXPORT workflow.
+"""Article-level data extraction -- MANUAL EXPORT workflow.
 
 No live Snowflake connection from code (by design). Instead:
   1. Run ARTICLE_LEVEL_QUERY (below) in a Snowflake SQL worksheet.
@@ -6,13 +6,23 @@ No live Snowflake connection from code (by design). Instead:
   3. Save as data/raw/articles.csv (default path in configs/base_config.yaml).
   4. Run validate_extract() to sanity-check the export.
 
-NOTE on the `target` definition in this version: positives are the top 10%
-by 48h pageviews, but ONLY among articles with pageviews_2d > 500 (see the
-HAVING clause) -- a per-article floor, not a peer-group-size floor. Flagged
-explicitly because it changes what "success" means: this excludes
-low-traffic articles from training entirely (rather than labeling them
-negative), which narrows the population the model is evaluated against.
-Confirm this is intentional before using it for the main model.
+Filters applied in this version, and why:
+  - publish_state = 'published', site = canonical_site: exclude drafts and
+    duplicate/mirrored site entries.
+  - sponsored_articles IS NULL: exclude sponsored content (no editorial
+    control over title/image for these).
+  - item_name != 'test': best-effort exclusion of obvious QA/test entries.
+    NOTE: this is an exact-match filter and will miss variants like
+    "test article", "asdasd", Hebrew "בדיקה", etc. -- flagged as a known
+    limitation, not a thorough test-data filter.
+  - main_channel_id NOT IN (...): excludes specific non-editorial channels.
+  - HAVING COUNT(*) > 10: floor on 48h pageviews, intended to drop
+    negligible/junk items. NOTE: also known to imperfectly correct for a
+    suspected cross-site event-attribution bug (some items showing near-zero
+    views on their real site due to a tracking bug misattributing views to
+    another site) -- accepted based on manual sampling of dozens of cases,
+    not a full quantified audit. Documented here as a conscious, stated
+    tradeoff.
 """
 import pandas as pd
 
@@ -37,6 +47,8 @@ WITH base AS (
       AND a.publish_state = 'published'
       AND a.pic_furl IS NOT NULL
       AND a.site = a.canonical_site
+      AND a.sponsored_articles is null
+      AND a.item_name != 'test'
       AND a.main_channel_id NOT IN (
           'd0289dfc85dab610VgnVCM200000650a10acRCRD',
           '44460a2610f26110VgnVCM1000005201000aRCRD',
@@ -58,7 +70,7 @@ item_2d AS (
     WHERE event_time >= display_time
       AND event_time < DATEADD(hour,48,display_time)
     GROUP BY item_id
-    HAVING COUNT(*) > 500
+    HAVING COUNT(*) > 10
 ),
 ranked AS (
     SELECT
@@ -87,8 +99,11 @@ EXPECTED_COLUMNS = ["item_id", "teaser_titel", "tags", "pic_furl", "site", "targ
 
 
 def validate_extract(csv_path: str = "data/raw/articles.csv") -> pd.DataFrame:
-    """Sanity-check a manually-exported CSV before using it downstream."""
+    """Sanity-check a manually-exported CSV before using it downstream.
+    Column names are matched case-insensitively -- Snowflake's CSV export
+    uppercases column names by default."""
     df = pd.read_csv(csv_path)
+    df.columns = [str(c).strip().lower() for c in df.columns]
 
     missing = set(EXPECTED_COLUMNS) - set(df.columns)
     if missing:
@@ -100,8 +115,7 @@ def validate_extract(csv_path: str = "data/raw/articles.csv") -> pd.DataFrame:
           f"(should equal row count -- duplicates would mean a grain bug)")
     print(f"Sites: {df['site'].value_counts().to_dict()}")
     print(f"Positive rate (target): {df['target'].mean():.1%}  "
-          f"(expected close to 10% by construction, but the >500-views "
-          f"floor may shift this -- worth checking)")
+          f"(expected close to 10% by construction)")
     print(f"Null pic_furl: {df['pic_furl'].isna().sum()}  (should be 0)")
     print(f"Null teaser_titel: {df['teaser_titel'].isna().sum()}  "
           f"(check this -- the enrichment join could produce nulls if a "
