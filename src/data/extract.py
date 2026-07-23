@@ -31,7 +31,7 @@ WITH base AS (
     SELECT
         a.item_id,
         a.item_name,
-        main_external_title as teaser_titel,
+        main_external_title as teaser_title,
         a.tags,
         a.pic_furl,
         a.site,
@@ -59,7 +59,7 @@ WITH base AS (
 item_2d AS (
     SELECT
         item_id,
-        MIN_BY(teaser_titel, event_time) AS teaser_titel,
+        MIN_BY(teaser_title, event_time) AS teaser_title,
         MIN_BY(tags, event_time) AS tags,
         MIN_BY(pic_furl, event_time) AS pic_furl,
         MIN_BY(site, event_time) AS site,
@@ -83,11 +83,11 @@ ranked AS (
 )
 SELECT
     item_id,
-    teaser_titel,
+    teaser_title,
     tags,
     pic_furl,
     site,
-    display_time,
+    TO_VARCHAR(display_time, 'YYYY-MM-DD HH24:MI:SS') AS display_time,
     CASE
         WHEN pct_rank_site_month >= .90 THEN 1
         ELSE 0
@@ -96,7 +96,7 @@ FROM ranked
 ORDER BY display_time;
 """
 
-EXPECTED_COLUMNS = ["item_id", "teaser_titel", "tags", "pic_furl", "site", "display_time", "target"]
+EXPECTED_COLUMNS = ["item_id", "teaser_title", "tags", "pic_furl", "site", "display_time", "target"]
 
 
 def validate_extract(csv_path: str = "data/raw/articles.csv") -> pd.DataFrame:
@@ -118,10 +118,34 @@ def validate_extract(csv_path: str = "data/raw/articles.csv") -> pd.DataFrame:
     print(f"Positive rate (target): {df['target'].mean():.1%}  "
           f"(expected close to 10% by construction)")
     print(f"Null pic_furl: {df['pic_furl'].isna().sum()}  (should be 0)")
-    print(f"Null teaser_titel: {df['teaser_titel'].isna().sum()}  "
+    print(f"Null teaser_title: {df['teaser_title'].isna().sum()}  "
           f"(check this -- the enrichment join could produce nulls if a "
           f"channel_id match is missing)")
-    print(f"Date range: {df['display_time'].min()} to {df['display_time'].max()}")
+
+    # Fail fast on a malformed/mangled display_time column (e.g. a spreadsheet
+    # app reinterpreting a timestamp as a bare "time of day" cell on save,
+    # which silently truncates the date/hour and previously slipped through
+    # here undetected).
+    parsed_dates = pd.to_datetime(df["display_time"], errors="coerce")
+    n_unparseable = parsed_dates.isna().sum()
+    if n_unparseable > 0:
+        raise ValueError(
+            f"{n_unparseable}/{len(df)} display_time values failed to parse as "
+            f"real timestamps. Example raw values: "
+            f"{df['display_time'].head(3).tolist()}. This usually means the CSV "
+            f"was opened/saved in a spreadsheet app (Excel/Sheets/Numbers) "
+            f"between export and use, which can silently mangle timestamp "
+            f"columns. Re-export directly from Snowflake without opening it in "
+            f"a spreadsheet app first."
+        )
+    min_sane_year, max_sane_year = 2020, 2030
+    if parsed_dates.dt.year.min() < min_sane_year or parsed_dates.dt.year.max() > max_sane_year:
+        raise ValueError(
+            f"display_time parsed, but with an implausible year range "
+            f"({parsed_dates.dt.year.min()}\u2013{parsed_dates.dt.year.max()}) -- "
+            f"likely still corrupted, just not in a way that raised a parse error."
+        )
+    print(f"Date range: {parsed_dates.min()} to {parsed_dates.max()}")
 
     return df
 
