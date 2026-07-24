@@ -35,6 +35,7 @@ import numpy as np
 from PIL import Image
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 
 from src.data.download_images import _cache_path
 from src.evaluation.metrics import compute_metrics
@@ -150,12 +151,16 @@ def image_only(train_df, val_df, checkpoint="google/siglip2-base-patch16-224",
     X_train = embed(train_df)
     X_val = embed(val_df)
 
-    clf = LogisticRegression(class_weight="balanced", max_iter=1000)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_val = scaler.transform(X_val)
+
+    clf = LogisticRegression(class_weight="balanced", max_iter=2000)
     clf.fit(X_train, train_df["target"])
 
     y_pred_proba = clf.predict_proba(X_val)[:, 1]
     metrics = compute_metrics(val_df["target"].values, y_pred_proba, k_values=k_values)
-    return metrics, {"processor": processor, "vision_model": model, "classifier": clf}
+    return metrics, {"processor": processor, "vision_model": model, "scaler": scaler, "classifier": clf}
 
 
 def title_image_frozen(train_df, val_df, checkpoint="google/siglip2-base-patch16-224",
@@ -196,12 +201,16 @@ def title_image_frozen(train_df, val_df, checkpoint="google/siglip2-base-patch16
     X_train = np.concatenate([img_train, txt_train], axis=1)
     X_val = np.concatenate([img_val, txt_val], axis=1)
 
-    clf = LogisticRegression(class_weight="balanced", max_iter=1000)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_val = scaler.transform(X_val)
+
+    clf = LogisticRegression(class_weight="balanced", max_iter=2000)
     clf.fit(X_train, train_df["target"])
 
     y_pred_proba = clf.predict_proba(X_val)[:, 1]
     metrics = compute_metrics(val_df["target"].values, y_pred_proba, k_values=k_values)
-    return metrics, {"processor": processor, "model": model, "classifier": clf}
+    return metrics, {"processor": processor, "model": model, "scaler": scaler, "classifier": clf}
 
 
 if __name__ == "__main__":
