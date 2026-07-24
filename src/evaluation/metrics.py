@@ -10,7 +10,13 @@ Ablation:
   image_only, title_image, full_model) and returns a comparison table —
   this is what answers "does the image actually add value beyond the title?"
 """
+import numpy as np
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, f1_score
+
+
+def _precision_at_k(y_true, y_pred_proba, k: int) -> float:
+    order = np.argsort(y_pred_proba)[::-1][:k]
+    return float(np.asarray(y_true)[order].mean())
 
 
 def compute_metrics(y_true, y_pred_proba, k_values=(50, 100, 200)) -> dict:
@@ -20,10 +26,8 @@ def compute_metrics(y_true, y_pred_proba, k_values=(50, 100, 200)) -> dict:
     f1 = f1_score(y_true, [1 if p >= 0.5 else 0 for p in y_pred_proba])
 
     results = {"roc_auc": roc_auc, "pr_auc": pr_auc, "f1": f1}
-    # TODO: precision@k — rank by y_pred_proba desc, take top k, compute
-    # fraction of true positives among them, for each k in k_values.
     for k in k_values:
-        results[f"precision_at_{k}"] = None  # Step 7
+        results[f"precision_at_{k}"] = _precision_at_k(y_true, y_pred_proba, k)
     return results
 
 

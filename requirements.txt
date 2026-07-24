@@ -1,7 +1,7 @@
 # Core
 torch>=2.2
 transformers>=4.42
-accelerate>=0.30
+accelerate>=1.1.0
 peft>=0.11          # LoRA
 
 # Data
@@ -11,6 +11,9 @@ pillow>=10.0
 requests>=2.31
 scikit-learn>=1.4
 pyyaml>=6.0
+truststore>=0.9      # use the OS trust store for HTTPS -- needed on networks with
+                      # SSL-inspecting proxies (e.g. corporate Fortinet) where the
+                      # cert isn't in Python's bundled certifi store
 
 # Baselines
 scikit-learn>=1.4    # TF-IDF + Logistic Regression

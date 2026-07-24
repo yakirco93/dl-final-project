@@ -1,25 +1,34 @@
 """PyTorch Dataset for (title, tags, image, site) -> label.
 
-TODO (Step 1, after extract.py + download_images.py are wired up):
-  - Load data/processed/{train,val,test}.csv (produced by a time-based split
-    of the extracted articles — see README "Workflow").
-  - __getitem__ should return the raw text fields + a loaded PIL image from
-    the local cache (src/data/download_images.py's cache_dir), letting the
-    model-specific processor (SigLIP2Processor, or separate tokenizer +
-    torchvision transform for the fallback model) handle featurization.
-  - Keep this Dataset model-agnostic; put SigLIP2-specific preprocessing in
-    src/models/siglip2_model.py's collate_fn instead, so baselines can reuse
-    the same Dataset class.
+Returns raw fields only (title string, tags string, a loaded PIL image, site
+string, int label) -- no tokenization or image transforms here. That stays
+model-specific: SigLIP2Processor / a separate tokenizer + torchvision
+transform belongs in the caller's collate_fn, so this one Dataset class is
+reusable across baselines and the main model.
 """
+from PIL import Image
 from torch.utils.data import Dataset
+import pandas as pd
+
+from src.data.download_images import _cache_path
 
 
 class ArticleDataset(Dataset):
     def __init__(self, csv_path: str, images_dir: str):
-        raise NotImplementedError("Step 1: implement after the data pipeline is in place.")
+        self.df = pd.read_csv(csv_path)
+        self.images_dir = images_dir
 
     def __len__(self):
-        raise NotImplementedError
+        return len(self.df)
 
     def __getitem__(self, idx):
-        raise NotImplementedError
+        row = self.df.iloc[idx]
+        image_path = _cache_path(row["pic_furl"], self.images_dir)
+        image = Image.open(image_path).convert("RGB")
+        return {
+            "title": row["teaser_title"],
+            "tags": row["tags"] if pd.notna(row["tags"]) else "",
+            "image": image,
+            "site": row["site"],
+            "label": int(row["target"]),
+        }
