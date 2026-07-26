@@ -1,0 +1,66 @@
+# Stage C: LoRA adapters (r=8) on q_proj/v_proj across ALL 12 layers of both
+# towers, instead of fully unfreezing a handful of top layers. Much lower
+# param count than Stage B (~590K vs 57.1M), directly targeting Stage B's
+# failure mode: unfreezing 57M params on a ~87K-row train set overfit fast
+# (val PR-AUC peaked at epoch 1, then degraded -- early stopping at epoch 4).
+# See project_explanation_HE.md section 11 for the full story.
+
+experiment_name: "siglip2_stage_c_lora"
+seed: 42
+
+data:
+  raw_csv: "data/raw/articles.csv"
+  images_dir: "data/images/"
+  processed_dir: "data/processed/"
+  sites: ["mako", "n12"]
+  target_column: "is_top_10_site_month"
+  split:
+    train_end_month: "2026-04"
+    val_month: "2026-05"
+    test_month: "2026-06"
+
+model:
+  type: "siglip2_multimodal"
+  siglip2:
+    checkpoint: "google/siglip2-base-patch16-224"
+    freeze_backbone: true          # base backbone frozen; only LoRA adapters + head train
+    unfreeze_last_n_layers: 0      # LoRA replaces manual layer-unfreezing (Stage B)
+    use_lora: true
+    lora:
+      r: 8
+      alpha: 16
+      dropout: 0.05
+  hybrid_fallback:
+    text_encoder: "onlplab/alephbert-base"
+    image_encoder: "resnet50"
+    fusion_hidden_dim: 256
+
+training:
+  batch_size: 32
+  learning_rate: 1.0e-4
+  backbone_lr_multiplier: 0.1      # LoRA adapter params train at 1e-5
+  num_epochs: 10
+  weight_decay: 0.01
+  loss: "bce_with_class_weight"
+  class_weight_positive: 9.0
+  early_stopping_patience: 3
+  scheduler: "cosine"
+
+evaluation:
+  metrics: ["roc_auc", "pr_auc", "f1", "precision_at_k"]
+  precision_at_k_values: [50, 100, 200]
+  ablation:
+    - name: "title_only"
+      inputs: ["title"]
+    - name: "title_tags"
+      inputs: ["title", "tags"]
+    - name: "image_only"
+      inputs: ["image"]
+    - name: "title_image"
+      inputs: ["title", "image"]
+    - name: "full_model"
+      inputs: ["title", "tags", "image", "site"]
+
+logging:
+  output_dir: "experiments/"
+  log_every_n_steps: 50

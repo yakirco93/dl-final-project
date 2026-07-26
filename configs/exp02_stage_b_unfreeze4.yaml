@@ -1,0 +1,65 @@
+# Stage B: unfreeze the top 4 transformer layers of both the vision and text
+# towers (out of 12 each, for the base checkpoint), instead of a fully frozen
+# backbone. Everything else is identical to base_config.yaml (Stage A, which
+# scored ROC-AUC 0.651 / PR-AUC 0.167 on val -- still behind text_only_bert's
+# 0.693 / 0.211). See project_explanation_HE.md section 11 for the full story.
+
+experiment_name: "siglip2_stage_b_unfreeze4"
+seed: 42
+
+data:
+  raw_csv: "data/raw/articles.csv"
+  images_dir: "data/images/"
+  processed_dir: "data/processed/"
+  sites: ["mako", "n12"]
+  target_column: "is_top_10_site_month"
+  split:
+    train_end_month: "2026-04"
+    val_month: "2026-05"
+    test_month: "2026-06"
+
+model:
+  type: "siglip2_multimodal"
+  siglip2:
+    checkpoint: "google/siglip2-base-patch16-224"
+    freeze_backbone: true          # still true -- unfreeze_last_n_layers below carves out an exception
+    unfreeze_last_n_layers: 4      # Stage B: was 0 in Stage A
+    use_lora: false
+    lora:
+      r: 8
+      alpha: 16
+      dropout: 0.05
+  hybrid_fallback:
+    text_encoder: "onlplab/alephbert-base"
+    image_encoder: "resnet50"
+    fusion_hidden_dim: 256
+
+training:
+  batch_size: 32
+  learning_rate: 1.0e-4
+  backbone_lr_multiplier: 0.1      # unfrozen backbone layers train at 1e-5
+  num_epochs: 10
+  weight_decay: 0.01
+  loss: "bce_with_class_weight"
+  class_weight_positive: 9.0
+  early_stopping_patience: 3
+  scheduler: "cosine"
+
+evaluation:
+  metrics: ["roc_auc", "pr_auc", "f1", "precision_at_k"]
+  precision_at_k_values: [50, 100, 200]
+  ablation:
+    - name: "title_only"
+      inputs: ["title"]
+    - name: "title_tags"
+      inputs: ["title", "tags"]
+    - name: "image_only"
+      inputs: ["image"]
+    - name: "title_image"
+      inputs: ["title", "image"]
+    - name: "full_model"
+      inputs: ["title", "tags", "image", "site"]
+
+logging:
+  output_dir: "experiments/"
+  log_every_n_steps: 50

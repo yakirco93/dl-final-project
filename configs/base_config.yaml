@@ -37,6 +37,11 @@ model:
 training:
   batch_size: 32
   learning_rate: 1.0e-4
+  # Discriminative fine-tuning (Stage B/C): unfrozen backbone/LoRA params train
+  # at learning_rate * backbone_lr_multiplier -- much lower than the head's LR,
+  # since the backbone is pretrained and shouldn't move as fast as a randomly
+  # initialized head. No effect in Stage A (no trainable backbone params).
+  backbone_lr_multiplier: 0.1
   num_epochs: 10
   weight_decay: 0.01
   # Address ~10% positive class imbalance
