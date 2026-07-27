@@ -1,0 +1,72 @@
+# Controlled ablation, requested after Model 1 (exp04) regressed below Stage
+# C: Model 1 changed THREE things at once (cross-attention fusion, combined
+# unfreeze+LoRA, full-res-only data) and got worse, likely from overfitting
+# (32.4M trainable params on only 53,544 rows -- train loss cratered while
+# val metrics fell). This isolates ONE variable: same capacity level as
+# Stage C (LoRA only, no extra unfreeze) and the FULL dataset (not
+# filtered), with ONLY the fusion head changed from concat to
+# cross-attention. If this beats Stage C (0.659/0.184), cross-attention
+# itself is the win. If not, the fusion idea itself may not be it.
+
+experiment_name: "siglip2_model1b_crossattn_lora_only"
+seed: 42
+
+data:
+  raw_csv: "data/raw/articles.csv"
+  images_dir: "data/images/"
+  processed_dir: "data/processed"   # full dataset (not the full-res-only filter this time)
+  sites: ["mako", "n12"]
+  target_column: "is_top_10_site_month"
+  split:
+    train_end_month: "2026-04"
+    val_month: "2026-05"
+    test_month: "2026-06"
+
+model:
+  type: "siglip2_multimodal"
+  siglip2:
+    checkpoint: "google/siglip2-base-patch16-224"
+    freeze_backbone: true
+    unfreeze_last_n_layers: 0      # back to Stage C's setting -- isolate the fusion variable
+    use_lora: true
+    lora:
+      r: 8
+      alpha: 16
+      dropout: 0.05
+    fusion: "cross_attention"      # the one variable changed vs. Stage C
+    fusion_dim: 512
+    fusion_num_heads: 8
+  hybrid_fallback:
+    text_encoder: "onlplab/alephbert-base"
+    image_encoder: "resnet50"
+    fusion_hidden_dim: 256
+
+training:
+  batch_size: 32
+  learning_rate: 1.0e-4
+  backbone_lr_multiplier: 0.1
+  num_epochs: 10
+  weight_decay: 0.01
+  loss: "bce_with_class_weight"
+  class_weight_positive: 9.0
+  early_stopping_patience: 3
+  scheduler: "cosine"
+
+evaluation:
+  metrics: ["roc_auc", "pr_auc", "f1", "precision_at_k"]
+  precision_at_k_values: [50, 100, 200]
+  ablation:
+    - name: "title_only"
+      inputs: ["title"]
+    - name: "title_tags"
+      inputs: ["title", "tags"]
+    - name: "image_only"
+      inputs: ["image"]
+    - name: "title_image"
+      inputs: ["title", "image"]
+    - name: "full_model"
+      inputs: ["title", "tags", "image", "site"]
+
+logging:
+  output_dir: "experiments/"
+  log_every_n_steps: 50
