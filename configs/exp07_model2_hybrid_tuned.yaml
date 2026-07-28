@@ -1,0 +1,79 @@
+# Tuning pass on Model 2 (exp06): the real run peaked at epoch 1
+# (ROC-AUC 0.660, PR-AUC 0.212 -- tied with text_only_bert on PR-AUC) then
+# drifted down through epoch 4 before patience=3 caught it. Param breakdown
+# showed ResNet's layer4 (14.96M trainable) is >2x BERT's one unfrozen layer
+# (7.09M) -- the likely bigger overfitting contributor. Three changes:
+#
+#   1. unfreeze_image_blocks: 0 -- freeze ResNet completely (was 1 = layer4).
+#      Removes the larger of the two trainable chunks; only BERT's top layer
+#      + the fusion head adapt now.
+#   2. eval_every_n_steps: 500 -- validate ~5-6x per epoch instead of once,
+#      to catch a peak this narrow more precisely (more aggressive/precise
+#      early stopping, as requested) rather than only seeing it after a full
+#      epoch already passed it.
+#   3. weight_decay: 0.05 (was 0.01) -- extra regularization given the
+#      fast-onset overfitting pattern.
+
+experiment_name: "hybrid_model2_tuned"
+seed: 42
+
+data:
+  raw_csv: "data/raw/articles.csv"
+  images_dir: "data/images/"
+  processed_dir: "data/processed"
+  sites: ["mako", "n12"]
+  target_column: "is_top_10_site_month"
+  split:
+    train_end_month: "2026-04"
+    val_month: "2026-05"
+    test_month: "2026-06"
+
+model:
+  type: "hybrid_fallback"
+  siglip2:
+    checkpoint: "google/siglip2-base-patch16-224"
+    freeze_backbone: true
+    unfreeze_last_n_layers: 0
+    use_lora: false
+    lora:
+      r: 8
+      alpha: 16
+      dropout: 0.05
+    fusion: "concat"
+  hybrid_fallback:
+    text_encoder: "onlplab/alephbert-base"
+    image_encoder: "resnet50"
+    fusion_hidden_dim: 256
+    unfreeze_text_layers: 1     # unchanged -- smaller of the two, kept as-is
+    unfreeze_image_blocks: 0    # was 1 (layer4) -- now fully frozen
+
+training:
+  batch_size: 32
+  learning_rate: 1.0e-4
+  backbone_lr_multiplier: 0.1
+  num_epochs: 10
+  weight_decay: 0.05           # was 0.01
+  loss: "bce_with_class_weight"
+  class_weight_positive: 9.0
+  early_stopping_patience: 3
+  eval_every_n_steps: 500      # was unset (epoch-only, ~2730 steps/epoch)
+  scheduler: "cosine"
+
+evaluation:
+  metrics: ["roc_auc", "pr_auc", "f1", "precision_at_k"]
+  precision_at_k_values: [50, 100, 200]
+  ablation:
+    - name: "title_only"
+      inputs: ["title"]
+    - name: "title_tags"
+      inputs: ["title", "tags"]
+    - name: "image_only"
+      inputs: ["image"]
+    - name: "title_image"
+      inputs: ["title", "image"]
+    - name: "full_model"
+      inputs: ["title", "tags", "image", "site"]
+
+logging:
+  output_dir: "experiments/"
+  log_every_n_steps: 50

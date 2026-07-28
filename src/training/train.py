@@ -83,6 +83,42 @@ def evaluate(model, val_loader, device, k_values):
     return compute_metrics(all_labels, all_probs, k_values=k_values)
 
 
+class _EvalState:
+    """Tracks best-so-far PR-AUC and early-stopping patience across eval
+    checks -- a "check" is either an epoch boundary (default) or every
+    training.eval_every_n_steps if set. Model 2's real run peaked at epoch 1
+    then drifted down through epoch 4 before patience=3 (epochs) caught it;
+    finer-grained checks catch the peak more precisely and stop faster."""
+
+    def __init__(self, run_dir, patience):
+        self.run_dir = run_dir
+        self.patience = patience
+        self.best_pr_auc = -1.0
+        self.checks_without_improvement = 0
+
+    def check(self, model, val_loader, device, k_values, step, epoch, epoch_log_writer, epoch_log_file):
+        metrics = evaluate(model, val_loader, device, k_values)
+        print(f"step {step} epoch {epoch} val: " + " ".join(f"{k}={v:.4f}" for k, v in metrics.items()), flush=True)
+        epoch_log_writer.writerow([step, epoch] + list(metrics.values()))
+        epoch_log_file.flush()
+
+        should_stop = False
+        if metrics["pr_auc"] > self.best_pr_auc:
+            self.best_pr_auc = metrics["pr_auc"]
+            self.checks_without_improvement = 0
+            # Reload with: model.load_state_dict(torch.load(path), strict=False)
+            # -- strict=False because this excludes the untouched frozen backbone.
+            torch.save(_trainable_state_dict(model), os.path.join(self.run_dir, "best_model.pt"))
+        else:
+            self.checks_without_improvement += 1
+            if self.checks_without_improvement >= self.patience:
+                print(f"Early stopping at step {step} epoch {epoch} "
+                      f"(no val PR-AUC improvement for {self.patience} checks)")
+                should_stop = True
+        model.train()
+        return should_stop
+
+
 def main(config_path: str):
     cfg = load_config(config_path)
     set_seed(cfg["seed"])
@@ -150,11 +186,16 @@ def main(config_path: str):
     step_log_writer.writerow(["step", "epoch", "loss"])
     epoch_log_file = open(epoch_log_path, "w", newline="")
     epoch_log_writer = csv.writer(epoch_log_file)
-    epoch_log_writer.writerow(["epoch"] + list(compute_metrics([0, 1], [0.1, 0.9], k_values=k_values).keys()))
+    epoch_log_writer.writerow(["step", "epoch"] + list(compute_metrics([0, 1], [0.1, 0.9], k_values=k_values).keys()))
 
-    best_pr_auc = -1.0
-    epochs_without_improvement = 0
+    # Optional finer-grained validation (e.g. every 500 steps instead of only
+    # at epoch boundaries) -- catches an early, narrow peak more precisely
+    # than waiting a full epoch to check. None (default) preserves the
+    # original once-per-epoch behavior exactly.
+    eval_every_n_steps = train_cfg.get("eval_every_n_steps")
+    eval_state = _EvalState(run_dir, train_cfg["early_stopping_patience"])
     step = 0
+    stopped = False
 
     for epoch in range(num_epochs):
         model.train()
@@ -171,28 +212,22 @@ def main(config_path: str):
                 print(f"epoch {epoch} step {step}/{total_steps} loss {loss.item():.4f}", flush=True)
                 step_log_writer.writerow([step, epoch, loss.item()])
                 step_log_file.flush()
-
-        metrics = evaluate(model, val_loader, device, k_values)
-        print(f"epoch {epoch} val: " + " ".join(f"{k}={v:.4f}" for k, v in metrics.items()), flush=True)
-        epoch_log_writer.writerow([epoch] + list(metrics.values()))
-        epoch_log_file.flush()
-
-        if metrics["pr_auc"] > best_pr_auc:
-            best_pr_auc = metrics["pr_auc"]
-            epochs_without_improvement = 0
-            # Reload with: model.load_state_dict(torch.load(path), strict=False)
-            # -- strict=False because this excludes the untouched frozen backbone.
-            torch.save(_trainable_state_dict(model), os.path.join(run_dir, "best_model.pt"))
-        else:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= train_cfg["early_stopping_patience"]:
-                print(f"Early stopping at epoch {epoch} "
-                      f"(no val PR-AUC improvement for {train_cfg['early_stopping_patience']} epochs)")
+            if eval_every_n_steps and step % eval_every_n_steps == 0:
+                stopped = eval_state.check(model, val_loader, device, k_values, step, epoch,
+                                            epoch_log_writer, epoch_log_file)
+                if stopped:
+                    break
+        if stopped:
+            break
+        if not eval_every_n_steps:
+            stopped = eval_state.check(model, val_loader, device, k_values, step, epoch,
+                                        epoch_log_writer, epoch_log_file)
+            if stopped:
                 break
 
     step_log_file.close()
     epoch_log_file.close()
-    print(f"Best val PR-AUC: {best_pr_auc:.4f}. Checkpoint: {run_dir}/best_model.pt")
+    print(f"Best val PR-AUC: {eval_state.best_pr_auc:.4f}. Checkpoint: {run_dir}/best_model.pt")
     print(f"Logs: {step_log_path}, {epoch_log_path}")
 
 
