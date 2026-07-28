@@ -1,12 +1,14 @@
-"""Training entry point for the main SigLIP2 model.
+"""Training entry point -- works for either model in config["model"]["type"]:
+"siglip2_multimodal" (src/models/siglip2_model.py) or "hybrid_fallback"
+(src/models/hybrid_fallback.py, AlephBERT+ResNet50).
 
 Usage:
     python -m src.training.train --config configs/base_config.yaml
 
 Responsibilities:
   - load_config + set_seed (src/utils.py) at the very start, for reproducibility
-  - build ArticleDataset/DataLoader (src/data/dataset.py), with SigLIP2-specific
-    batching from src/models/siglip2_model.py's make_collate_fn
+  - build ArticleDataset/DataLoader (src/data/dataset.py), with the model's own
+    collate_fn (each model module owns its input preprocessing)
   - class-weighted BCE loss per config["training"]["class_weight_positive"]
     (only "bce_with_class_weight" is implemented; "focal_loss" is not)
   - log training loss every config["logging"]["log_every_n_steps"] steps, and
@@ -24,17 +26,40 @@ from torch.utils.data import DataLoader
 
 from src.data.dataset import ArticleDataset
 from src.evaluation.metrics import compute_metrics
-from src.models.siglip2_model import SigLIP2Classifier, make_collate_fn
 from src.utils import get_device, load_config, set_seed
+
+# Both models prefix their pretrained-backbone submodules with one of these
+# names -- used to split params into "backbone" (discriminative LR, lower
+# than the head) vs. "head" (full LR). See each model's _apply_freeze_strategy.
+_BACKBONE_PREFIXES = ("backbone.", "text_encoder.", "image_encoder.")
+
+
+def _build_model_and_collate_fn(cfg, device):
+    model_type = cfg["model"]["type"]
+    if model_type == "siglip2_multimodal":
+        from src.models.siglip2_model import SigLIP2Classifier, make_collate_fn
+        model = SigLIP2Classifier(cfg).to(device)
+        collate_fn = make_collate_fn(model.processor, model.site_to_idx)
+    elif model_type == "hybrid_fallback":
+        from src.models.hybrid_fallback import HybridClassifier, make_hybrid_collate_fn
+        model = HybridClassifier(cfg).to(device)
+        collate_fn = make_hybrid_collate_fn(model.tokenizer, model.site_to_idx)
+    else:
+        raise ValueError(f"Unknown model type: {model_type!r}")
+    return model, collate_fn
 
 
 def _move_to_device(batch, device):
-    inputs = {
-        "image_inputs": {k: v.to(device) for k, v in batch["image_inputs"].items()},
-        "text_inputs": {k: v.to(device) for k, v in batch["text_inputs"].items()},
-        "site_idx": batch["site_idx"].to(device),
-    }
-    return inputs, batch["labels"].to(device)
+    """Generic across both models: nested dicts of tensors (SigLIP2's
+    image_inputs/text_inputs) or flat tensors (Hybrid's input_ids/
+    attention_mask/pixel_values) -- either way, everything but "labels"."""
+    labels = batch["labels"].to(device)
+    inputs = {}
+    for k, v in batch.items():
+        if k == "labels":
+            continue
+        inputs[k] = {kk: vv.to(device) for kk, vv in v.items()} if isinstance(v, dict) else v.to(device)
+    return inputs, labels
 
 
 def _trainable_state_dict(model):
@@ -70,8 +95,7 @@ def main(config_path: str):
     train_cfg = cfg["training"]
     k_values = tuple(cfg["evaluation"]["precision_at_k_values"])
 
-    model = SigLIP2Classifier(cfg).to(device)
-    collate_fn = make_collate_fn(model.processor, model.site_to_idx)
+    model, collate_fn = _build_model_and_collate_fn(cfg, device)
 
     train_ds = ArticleDataset(f"{data_cfg['processed_dir']}/train.csv", data_cfg["images_dir"])
     val_ds = ArticleDataset(f"{data_cfg['processed_dir']}/val.csv", data_cfg["images_dir"])
@@ -97,8 +121,8 @@ def main(config_path: str):
     # Discriminative fine-tuning: any unfrozen backbone params (Stage B) or
     # LoRA params (Stage C) train at a lower LR than the head -- they're
     # pretrained and shouldn't move as fast as the randomly-initialized head.
-    backbone_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith("backbone.")]
-    head_params = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("backbone.")]
+    backbone_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith(_BACKBONE_PREFIXES)]
+    head_params = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith(_BACKBONE_PREFIXES)]
     param_groups = [{"params": head_params, "lr": train_cfg["learning_rate"]}]
     if backbone_params:
         param_groups.append({"params": backbone_params,

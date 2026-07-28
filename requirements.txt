@@ -1,5 +1,6 @@
 # Core
 torch>=2.2
+torchvision>=0.17    # ResNet50 for the hybrid_fallback model
 transformers>=4.42
 accelerate>=1.1.0
 peft>=0.11          # LoRA
