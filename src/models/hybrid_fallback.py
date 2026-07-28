@@ -99,11 +99,29 @@ class HybridClassifier(nn.Module):
         return self.head(combined).squeeze(-1)
 
 
-_IMAGENET_TRANSFORM = T.Compose([
+_IMAGENET_NORMALIZE = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+# Deterministic -- used for val/test so metrics aren't affected by random
+# augmentation draws.
+_EVAL_TRANSFORM = T.Compose([
     T.Resize(256),
     T.CenterCrop(224),
     T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    _IMAGENET_NORMALIZE,
+])
+
+# Random crop/flip/color-jitter -- only meaningful once the vision backbone
+# (or part of it, e.g. layer4) is actually being fine-tuned; augmenting
+# inputs to a fully-frozen ResNet just adds noise to features nothing
+# downstream of the backbone can adapt to compensate for. Intended to fight
+# overfitting more directly than freezing capacity away entirely (see
+# project_explanation_HE.md section 11).
+_TRAIN_TRANSFORM = T.Compose([
+    T.RandomResizedCrop(224, scale=(0.8, 1.0)),
+    T.RandomHorizontalFlip(),
+    T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    T.ToTensor(),
+    _IMAGENET_NORMALIZE,
 ])
 
 
@@ -112,16 +130,17 @@ class _HybridCollateFn:
     siglip2_model.py for why: DataLoader(num_workers>0) on macOS pickles the
     collate_fn to send to worker processes."""
 
-    def __init__(self, tokenizer, site_to_idx: dict, max_length: int = 64):
+    def __init__(self, tokenizer, site_to_idx: dict, max_length: int = 64, train: bool = True):
         self.tokenizer = tokenizer
         self.site_to_idx = site_to_idx
         self.max_length = max_length
+        self.transform = _TRAIN_TRANSFORM if train else _EVAL_TRANSFORM
 
     def __call__(self, batch):
         titles = [item["title"] for item in batch]
         sites = [self.site_to_idx[item["site"]] for item in batch]
         labels = [float(item["label"]) for item in batch]
-        pixel_values = torch.stack([_IMAGENET_TRANSFORM(item["image"]) for item in batch])
+        pixel_values = torch.stack([self.transform(item["image"]) for item in batch])
 
         text_inputs = self.tokenizer(titles, return_tensors="pt", padding=True,
                                       truncation=True, max_length=self.max_length)
@@ -135,5 +154,5 @@ class _HybridCollateFn:
         }
 
 
-def make_hybrid_collate_fn(tokenizer, site_to_idx: dict):
-    return _HybridCollateFn(tokenizer, site_to_idx)
+def make_hybrid_collate_fn(tokenizer, site_to_idx: dict, train: bool = True):
+    return _HybridCollateFn(tokenizer, site_to_idx, train=train)

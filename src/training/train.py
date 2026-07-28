@@ -34,19 +34,24 @@ from src.utils import get_device, load_config, set_seed
 _BACKBONE_PREFIXES = ("backbone.", "text_encoder.", "image_encoder.")
 
 
-def _build_model_and_collate_fn(cfg, device):
+def _build_model_and_collate_fns(cfg, device):
+    """Returns (model, train_collate_fn, val_collate_fn) -- separate so the
+    hybrid model can apply image augmentation only to the train split
+    (SigLIP2 uses the same collate_fn for both, no augmentation there)."""
     model_type = cfg["model"]["type"]
     if model_type == "siglip2_multimodal":
         from src.models.siglip2_model import SigLIP2Classifier, make_collate_fn
         model = SigLIP2Classifier(cfg).to(device)
         collate_fn = make_collate_fn(model.processor, model.site_to_idx)
+        return model, collate_fn, collate_fn
     elif model_type == "hybrid_fallback":
         from src.models.hybrid_fallback import HybridClassifier, make_hybrid_collate_fn
         model = HybridClassifier(cfg).to(device)
-        collate_fn = make_hybrid_collate_fn(model.tokenizer, model.site_to_idx)
+        train_collate_fn = make_hybrid_collate_fn(model.tokenizer, model.site_to_idx, train=True)
+        val_collate_fn = make_hybrid_collate_fn(model.tokenizer, model.site_to_idx, train=False)
+        return model, train_collate_fn, val_collate_fn
     else:
         raise ValueError(f"Unknown model type: {model_type!r}")
-    return model, collate_fn
 
 
 def _move_to_device(batch, device):
@@ -131,7 +136,7 @@ def main(config_path: str):
     train_cfg = cfg["training"]
     k_values = tuple(cfg["evaluation"]["precision_at_k_values"])
 
-    model, collate_fn = _build_model_and_collate_fn(cfg, device)
+    model, train_collate_fn, val_collate_fn = _build_model_and_collate_fns(cfg, device)
 
     train_ds = ArticleDataset(f"{data_cfg['processed_dir']}/train.csv", data_cfg["images_dir"])
     val_ds = ArticleDataset(f"{data_cfg['processed_dir']}/val.csv", data_cfg["images_dir"])
@@ -147,9 +152,9 @@ def main(config_path: str):
     # bump it back up via config if starting from a cold cache.
     num_workers = min(train_cfg.get("num_workers", 0), os.cpu_count() or 1)
     train_loader = DataLoader(train_ds, batch_size=train_cfg["batch_size"], shuffle=True,
-                               collate_fn=collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0)
+                               collate_fn=train_collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0)
     val_loader = DataLoader(val_ds, batch_size=train_cfg["batch_size"], shuffle=False,
-                             collate_fn=collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0)
+                             collate_fn=val_collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0)
 
     pos_weight = torch.tensor(train_cfg["class_weight_positive"], dtype=torch.float, device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)

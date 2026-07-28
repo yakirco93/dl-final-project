@@ -1,0 +1,83 @@
+# Follow-up on exp07 (which succeeded: ROC-AUC 0.693, PR-AUC 0.240 -- the
+# first model in the project to beat text_only_bert's PR-AUC of 0.212,
+# completing all 10 epochs with no early stopping). Keeps everything that
+# worked (weight_decay=0.05, eval_every_n_steps=500,
+# early_stopping_patience=16) and adds two changes at once, now that we
+# have a stable baseline to compare against:
+#
+#   1. unfreeze_image_blocks: 1 -- re-enable ResNet's layer4 (was 0, fully
+#      frozen in exp07). Gives the vision backbone room to adapt again.
+#   2. Image augmentation on the training split only (random crop, flip,
+#      color jitter -- src/models/hybrid_fallback.py's _TRAIN_TRANSFORM,
+#      val/test still use the deterministic _EVAL_TRANSFORM). Augmentation
+#      only matters once part of the vision backbone is actually training,
+#      which is why it wasn't useful in exp07 (fully frozen ResNet).
+#
+# Goal: get layer4's extra capacity back (which helped v1 reach ROC-AUC
+# 0.660 vs exp07's more limited BERT-only adaptation) without reintroducing
+# the fast overfitting v1 showed, using augmentation as a more direct
+# regularizer than just freezing capacity away.
+
+experiment_name: "hybrid_model2_augment_unfreeze4"
+seed: 42
+
+data:
+  raw_csv: "data/raw/articles.csv"
+  images_dir: "data/images/"
+  processed_dir: "data/processed"
+  sites: ["mako", "n12"]
+  target_column: "is_top_10_site_month"
+  split:
+    train_end_month: "2026-04"
+    val_month: "2026-05"
+    test_month: "2026-06"
+
+model:
+  type: "hybrid_fallback"
+  siglip2:
+    checkpoint: "google/siglip2-base-patch16-224"
+    freeze_backbone: true
+    unfreeze_last_n_layers: 0
+    use_lora: false
+    lora:
+      r: 8
+      alpha: 16
+      dropout: 0.05
+    fusion: "concat"
+  hybrid_fallback:
+    text_encoder: "onlplab/alephbert-base"
+    image_encoder: "resnet50"
+    fusion_hidden_dim: 256
+    unfreeze_text_layers: 1
+    unfreeze_image_blocks: 1    # was 0 in exp07 -- layer4 re-enabled
+
+training:
+  batch_size: 32
+  learning_rate: 1.0e-4
+  backbone_lr_multiplier: 0.1
+  num_epochs: 10
+  weight_decay: 0.05
+  loss: "bce_with_class_weight"
+  class_weight_positive: 9.0
+  early_stopping_patience: 16
+  eval_every_n_steps: 500
+  scheduler: "cosine"
+
+evaluation:
+  metrics: ["roc_auc", "pr_auc", "f1", "precision_at_k"]
+  precision_at_k_values: [50, 100, 200]
+  ablation:
+    - name: "title_only"
+      inputs: ["title"]
+    - name: "title_tags"
+      inputs: ["title", "tags"]
+    - name: "image_only"
+      inputs: ["image"]
+    - name: "title_image"
+      inputs: ["title", "image"]
+    - name: "full_model"
+      inputs: ["title", "tags", "image", "site"]
+
+logging:
+  output_dir: "experiments/"
+  log_every_n_steps: 50
