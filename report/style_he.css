@@ -1,0 +1,97 @@
+@page { size: A4; margin: 2.1cm 2.3cm; }
+
+html, body {
+  direction: rtl;
+}
+
+body {
+  font-family: "Arial Hebrew", "Noto Sans Hebrew", "SF Hebrew", Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.7;
+  color: #1c1c1c;
+  text-align: right;
+}
+
+h1 {
+  font-size: 19pt;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  line-height: 1.35;
+  text-align: center;
+}
+h1 + h3 {
+  font-size: 12pt;
+  font-weight: 400;
+  color: #555;
+  text-align: center;
+  margin: 0 0 20px 0;
+}
+h2 {
+  font-size: 15pt;
+  font-weight: 700;
+  color: #0e3a5f;
+  margin: 26px 0 10px 0;
+  padding-bottom: 4px;
+  border-bottom: 1.5pt solid #0e3a5f33;
+  break-after: avoid;
+}
+h3 {
+  font-size: 12.5pt;
+  font-weight: 700;
+  color: #0e3a5f;
+  margin: 16px 0 6px 0;
+  break-after: avoid;
+}
+p { margin: 0 0 10px 0; text-align: justify; }
+hr { border: none; border-top: 1pt solid #ccc; margin: 18px 0; }
+ul, ol { margin: 0 0 12px 0; padding-right: 1.5em; padding-left: 0; }
+li { margin-bottom: 4px; }
+strong { font-weight: 700; color: #0e3a5f; }
+blockquote {
+  margin: 10px 0;
+  padding: 8px 14px;
+  border-right: 3pt solid #0e3a5f66;
+  border-left: none;
+  background: #f7f9fb;
+  color: #333;
+}
+
+table {
+  direction: rtl;
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0 16px 0;
+  font-size: 9.5pt;
+  break-inside: avoid;
+}
+th, td { border: 0.75pt solid #ccc; padding: 6px 9px; text-align: right; }
+th { background: #eef3f7; font-weight: 700; }
+tr:nth-child(even) td { background: #fafbfc; }
+
+figure {
+  direction: ltr;
+  margin: 14px 0 18px 0;
+  text-align: center;
+  break-inside: avoid;
+}
+img { max-width: 85%; display: block; margin: 0 auto; border: 0.5pt solid #ddd; }
+figcaption {
+  direction: rtl;
+  font-size: 9pt;
+  color: #666;
+  margin-top: 6px;
+  max-width: 88%;
+  margin-right: auto;
+  margin-left: auto;
+  text-align: right;
+}
+
+code {
+  direction: ltr;
+  unicode-bidi: embed;
+  font-family: "SF Mono", Menlo, monospace;
+  background: #f2f2f2;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.88em;
+}
